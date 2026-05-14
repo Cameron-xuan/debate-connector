@@ -1,0 +1,2 @@
+[console_scripts]
+debate = debate_connector.cli:cli
