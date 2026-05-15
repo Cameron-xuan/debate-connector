@@ -19,24 +19,41 @@ SLOT_LABELS = {
 }
 
 
-def run_ai(cmd: str, prompt: str, timeout: int = 90) -> str:
+async def run_ai(cmd: str, prompt: str, timeout: int = 90) -> str:
+    """异步调用 AI（非流式），用于 judge_now 等需要完整结果的场景。"""
     try:
-        result = subprocess.run(
-            cmd, shell=True,
-            input=prompt, capture_output=True,
-            text=True, encoding='utf-8', errors='replace',
+        proc = await asyncio.create_subprocess_shell(
+            cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except Exception as e:
+        print(f"\n[error] 无法启动 AI 进程: {e}", file=sys.stderr)
+        return ''
+
+    try:
+        stdout_data, stderr_data = await asyncio.wait_for(
+            proc.communicate(prompt.encode('utf-8')),
             timeout=timeout,
         )
-        output = (result.stdout or '').strip()
-        if not output and result.stderr:
-            print(f"\n[warn] AI stderr: {result.stderr[:200]}", file=sys.stderr)
-        return output
-    except subprocess.TimeoutExpired:
+    except asyncio.TimeoutError:
         print("\n[warn] AI command timed out", file=sys.stderr)
+        try:
+            proc.kill()
+            await proc.wait()
+        except Exception:
+            pass
         return ''
     except Exception as e:
         print(f"\n[error] AI command failed: {e}", file=sys.stderr)
         return ''
+
+    output = stdout_data.decode('utf-8', errors='replace').strip()
+    if not output and stderr_data:
+        err_text = stderr_data.decode('utf-8', errors='replace')[:200]
+        print(f"\n[warn] AI stderr: {err_text}", file=sys.stderr)
+    return output
 
 
 async def run_ai_stream(cmd: str, prompt: str, ws, timeout: int) -> str:
@@ -189,7 +206,7 @@ async def connect(host: str, room: str, slot: str, name: str, cmd: str):
                     print(f"\n[▶] 评审时间！请对辩论进行评分...")
                     prompt = build_judge_prompt(msg)
                     print(f"[~] 正在调用 AI 评分...")
-                    raw_score = run_ai(cmd, prompt, timeout=60)
+                    raw_score = await run_ai(cmd, prompt, timeout=180)
                     score = parse_judge_output(raw_score)
                     if score:
                         await ws.send(json.dumps({'event': 'score', **score}))
