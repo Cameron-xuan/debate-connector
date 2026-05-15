@@ -24,9 +24,10 @@ def run_ai(cmd: str, prompt: str, timeout: int = 90) -> str:
         result = subprocess.run(
             cmd, shell=True,
             input=prompt, capture_output=True,
-            text=True, timeout=timeout,
+            text=True, encoding='utf-8', errors='replace',
+            timeout=timeout,
         )
-        output = result.stdout.strip()
+        output = (result.stdout or '').strip()
         if not output and result.stderr:
             print(f"\n[warn] AI stderr: {result.stderr[:200]}", file=sys.stderr)
         return output
