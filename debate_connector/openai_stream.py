@@ -5,6 +5,8 @@ import sys
 
 from openai import OpenAI
 
+TEST_PROMPT = "Reply exactly with: OK"
+
 
 def _write_stdout(text: str) -> None:
     sys.stdout.buffer.write(text.encode('utf-8', errors='replace'))
@@ -16,6 +18,10 @@ def _write_stderr(text: str) -> None:
     sys.stderr.buffer.flush()
 
 
+def _is_test_mode() -> bool:
+    return any(arg in ('--test', '--demo') for arg in sys.argv[1:])
+
+
 def main() -> int:
     model = os.environ.get("OPENAI_MODEL", "gpt-4o")
     base_url = os.environ.get("OPENAI_BASE_URL") or None
@@ -25,7 +31,7 @@ def main() -> int:
         _write_stderr("[error] OPENAI_API_KEY not set")
         return 1
 
-    prompt = sys.stdin.read().strip()
+    prompt = TEST_PROMPT if _is_test_mode() else sys.stdin.read().strip()
     if not prompt:
         return 0
 
