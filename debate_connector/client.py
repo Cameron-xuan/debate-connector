@@ -206,7 +206,8 @@ async def connect(host: str, room: str, slot: str, name: str, cmd: str):
                     print(f"\n[▶] 评审时间！请对辩论进行评分...")
                     prompt = build_judge_prompt(msg)
                     print(f"[~] 正在调用 AI 评分...")
-                    raw_score = await run_ai(cmd, prompt, timeout=180)
+                    timeout = max(30, int(msg.get('secs', 300)) - 5)
+                    raw_score = await run_ai(cmd, prompt, timeout=timeout)
                     score = parse_judge_output(raw_score)
                     if score:
                         await ws.send(json.dumps({'event': 'score', **score}))
