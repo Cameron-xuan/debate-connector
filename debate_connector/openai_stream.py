@@ -6,13 +6,23 @@ import sys
 from openai import OpenAI
 
 
+def _write_stdout(text: str) -> None:
+    sys.stdout.buffer.write(text.encode('utf-8', errors='replace'))
+    sys.stdout.buffer.flush()
+
+
+def _write_stderr(text: str) -> None:
+    sys.stderr.buffer.write((text + '\n').encode('utf-8', errors='replace'))
+    sys.stderr.buffer.flush()
+
+
 def main() -> int:
     model = os.environ.get("OPENAI_MODEL", "gpt-4o")
     base_url = os.environ.get("OPENAI_BASE_URL") or None
     api_key = os.environ.get("OPENAI_API_KEY", "")
 
     if not api_key:
-        print("[error] OPENAI_API_KEY not set", file=sys.stderr)
+        _write_stderr("[error] OPENAI_API_KEY not set")
         return 1
 
     prompt = sys.stdin.read().strip()
@@ -30,9 +40,9 @@ def main() -> int:
         for chunk in response:
             delta = chunk.choices[0].delta.content
             if delta:
-                print(delta, end="", flush=True)
+                _write_stdout(delta)
     except Exception as exc:
-        print(f"[error] {exc}", file=sys.stderr)
+        _write_stderr(f"[error] {exc}")
         return 1
 
     return 0
