@@ -2,6 +2,7 @@ import asyncio
 import codecs
 import json
 import locale
+import os
 import shlex
 import subprocess
 import sys
@@ -41,6 +42,22 @@ def _resolve_cmd(cmd: str) -> str:
     return _shell_command([sys.executable, '-m', module])
 
 
+def _child_env() -> dict[str, str]:
+    """Force UTF-8 IO in the child Python process so it doesn't decode
+    our piped UTF-8 prompt as cp936/cp1252 on Windows."""
+    env = os.environ.copy()
+    env.setdefault('PYTHONIOENCODING', 'utf-8')
+    env.setdefault('PYTHONUTF8', '1')
+    return env
+
+
+def _sanitize_text(text: str) -> str:
+    """Strip lone surrogates (\\udcXX) that may sneak in on Windows from
+    locale/surrogateescape decoding; otherwise prompt.encode('utf-8')
+    raises 'surrogates not allowed' when forwarding to the AI subprocess."""
+    return text.encode('utf-8', errors='replace').decode('utf-8')
+
+
 def _decode_stderr(data: bytes) -> str:
     if sys.platform == 'win32':
         encodings = [
@@ -74,6 +91,7 @@ async def run_ai(cmd: str, prompt: str, timeout: int = 90) -> str:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=_child_env(),
         )
     except Exception as e:
         print(f"\n[error] 无法启动 AI 进程: {e}", file=sys.stderr)
@@ -81,7 +99,7 @@ async def run_ai(cmd: str, prompt: str, timeout: int = 90) -> str:
 
     try:
         stdout_data, stderr_data = await asyncio.wait_for(
-            proc.communicate(prompt.encode('utf-8')),
+            proc.communicate(_sanitize_text(prompt).encode('utf-8')),
             timeout=timeout,
         )
     except asyncio.TimeoutError:
@@ -112,6 +130,7 @@ async def run_ai_stream(cmd: str, prompt: str, ws, timeout: int) -> str:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=_child_env(),
         )
     except Exception as e:
         print(f"\n[error] 无法启动 AI 进程: {e}", file=sys.stderr)
@@ -119,7 +138,7 @@ async def run_ai_stream(cmd: str, prompt: str, ws, timeout: int) -> str:
 
     assert proc.stdin and proc.stdout and proc.stderr
     try:
-        proc.stdin.write(prompt.encode('utf-8'))
+        proc.stdin.write(_sanitize_text(prompt).encode('utf-8'))
         await proc.stdin.drain()
         proc.stdin.close()
     except Exception as e:
