@@ -1,6 +1,8 @@
 import asyncio
 import codecs
 import json
+import locale
+import shlex
 import subprocess
 import sys
 from typing import Optional
@@ -19,11 +21,56 @@ SLOT_LABELS = {
 }
 
 
+BUILTIN_COMMAND_MODULES = {
+    'debate-codex-bridge': 'debate_connector.codex_bridge',
+    'debate-openai-stream': 'debate_connector.openai_stream',
+}
+
+
+def _shell_command(args: list[str]) -> str:
+    if sys.platform == 'win32':
+        return subprocess.list2cmdline(args)
+    return shlex.join(args)
+
+
+def _resolve_cmd(cmd: str) -> str:
+    stripped = cmd.strip()
+    module = BUILTIN_COMMAND_MODULES.get(stripped)
+    if not module:
+        return cmd
+    return _shell_command([sys.executable, '-m', module])
+
+
+def _decode_stderr(data: bytes) -> str:
+    if sys.platform == 'win32':
+        encodings = [
+            locale.getpreferredencoding(False),
+            sys.getfilesystemencoding(),
+            'mbcs',
+            'cp936',
+            'gb18030',
+            'utf-8',
+        ]
+    else:
+        encodings = [
+            'utf-8',
+            locale.getpreferredencoding(False),
+            sys.getfilesystemencoding(),
+        ]
+    for encoding in dict.fromkeys(e for e in encodings if e):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            pass
+    return data.decode('utf-8', errors='replace')
+
+
 async def run_ai(cmd: str, prompt: str, timeout: int = 90) -> str:
     """异步调用 AI（非流式），用于 judge_now 等需要完整结果的场景。"""
+    resolved_cmd = _resolve_cmd(cmd)
     try:
         proc = await asyncio.create_subprocess_shell(
-            cmd,
+            resolved_cmd,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -51,16 +98,17 @@ async def run_ai(cmd: str, prompt: str, timeout: int = 90) -> str:
 
     output = stdout_data.decode('utf-8', errors='replace').strip()
     if not output and stderr_data:
-        err_text = stderr_data.decode('utf-8', errors='replace')[:200]
+        err_text = _decode_stderr(stderr_data)[:200]
         print(f"\n[warn] AI stderr: {err_text}", file=sys.stderr)
     return output
 
 
 async def run_ai_stream(cmd: str, prompt: str, ws, timeout: int) -> str:
     """流式调用 AI：边读 stdout 边通过 ws 发送 speech_chunk。返回累计完整文本。"""
+    resolved_cmd = _resolve_cmd(cmd)
     try:
         proc = await asyncio.create_subprocess_shell(
-            cmd,
+            resolved_cmd,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -124,7 +172,7 @@ async def run_ai_stream(cmd: str, prompt: str, ws, timeout: int) -> str:
 
     output = ''.join(accumulated).strip()
     if not output and stderr_buf:
-        err_text = bytes(stderr_buf).decode('utf-8', errors='replace')[:200]
+        err_text = _decode_stderr(bytes(stderr_buf))[:200]
         print(f"\n[warn] AI stderr: {err_text}", file=sys.stderr)
     return output
 
