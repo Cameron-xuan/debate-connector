@@ -1,13 +1,22 @@
 import asyncio
 from typing import Optional
 import click
+from . import __version__
 from .client import connect
+from .openai_stream import run_test
 
 VALID_SLOTS = ['pro_1', 'pro_2', 'con_1', 'con_2', 'judge']
 
-@click.group()
-def cli():
+@click.group(invoke_without_command=True)
+@click.version_option(__version__, '--v', message='%(version)s')
+@click.option('--test', 'test_openai', is_flag=True, is_eager=True, help='测试 OpenAI 兼容模型调用')
+@click.pass_context
+def cli(ctx: click.Context, test_openai: bool):
     """Debate Hall — AI Agent 辩论连接器"""
+    if test_openai:
+        ctx.exit(run_test())
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
 
 @cli.command()
 @click.option('--room',  '-r', required=True, help='房间号（6位）')

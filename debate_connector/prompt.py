@@ -19,13 +19,21 @@ INTERIM_JUDGE_PROMPT_TEMPLATE = """你是一位公正的辩论评委，正在主
 当前点评阶段：{round_label}
 时间限制：{secs} 秒（约 {word_limit} 字以内）
 
-=== 截至目前的完整发言记录 ===
-{transcript}
+=== 本回合发言（这是你本次点评的唯一评价对象） ===
+{current_transcript}
+
+=== 此前发言记录（仅供理解上下文，不得作为“本回合表现”评价） ===
+{previous_transcript}
 
 请做一次真实辩论赛风格的中场点评。要求：
+- 输出语言必须与辩题主要语言一致；如果辩题是中文，必须使用中文输出
 - 只点评过程表现，不宣布胜负，不给最终比分
-- 指出双方本回合最有效的推进和最明显的漏洞
-- 最后必须给出“下一回合关键看点”，提示双方下一轮最该争夺的胜负问题
+- 只评价“本回合发言”中的表现；此前发言只能作为上下文
+- 严格按发言编号和发言顺序判断回应义务：一方不能因未回应其发言之后才出现的观点而被扣分
+- 指出双方本回合最有效的推进和最明显的漏洞；不要把此前回合的表现说成本回合表现
+- 区分“提出了主张/案例”和“完成了证明”：未经支撑或尚未被对方回应的案例，只能评价为攻击方向，不能直接认定为有效实证
+- 对具体事实、年份、国家、公司、数字、伤亡或损失后果保持审慎；如果发言中没有给出来源或对方尚未承认，只能标记为“待证”，不能作为已成立优势
+- 最后必须给出“下一回合关键看点”，但只能基于双方已经暴露的未决争议，不得引入新事实、新案例或替任一方设计新论点
 - 点评要具体，避免“双方都很精彩”这类空话
 - 字数控制在 {word_limit} 字以内
 
@@ -52,8 +60,11 @@ JUDGE_PROMPT_TEMPLATE = """你是一位公正的辩论评委。请根据以下�
 5. 总结陈词与回收（15分）：是否回收全场主要胜负点，比较双方表现，而不是临时提出大量新论点
 
 评分要求：
+- 输出 JSON 中的 comment 语言必须与辩题主要语言一致；如果辩题是中文，comment 必须使用中文
 - 分数应体现全场表现，不要只看最后一轮
 - 中场点评只能作为过程参考，不能替代最终独立判断
+- 具体事实案例、年份、国家、公司、数字、伤亡或损失后果若未经文本支撑或双方承认，应视为“待证事实”，不得作为已经成立的胜负依据
+- 如果一方把待证事实包装成实证案例，应在论证质量或回应质量中酌情扣分
 - 如果双方都没有明显压倒对方，可以判 none
 - winner 必须与总分和评语理由一致；若分差很小但一方关键战场更强，也可以给该方小胜
 
@@ -89,10 +100,14 @@ DEBATE_PROMPT_TEMPLATE = """你正在参加一场正式辩论比赛。
 {judge_focus}
 
 请给出你的辩论发言。要求：
+- 输出语言必须与辩题主要语言一致；如果辩题是中文，必须使用中文输出
 - 必须回应对方最新发言中的一个关键论点，不要自说自话
 - 如果有评委提示，要在策略上处理该关键看点；不要生硬地说“评委刚才说”
 - 围绕 1-2 个最重要战场推进，不要平均铺开所有问题
 - 不要编造对方没有说过的观点
+- 不得虚构现实案例、年份、国家、公司、数字、伤亡或损失后果
+- 无法确认真实性的外部事实不得使用；不要把不确定信息改写成“某公司/某国家/某年份/某事故”等模糊案例
+- 具体事实案例必须来自辩论历史、用户提供材料、给定事实库，或属于你高度确信的公开常识；不满足时必须省略该案例，改用不含具体事实细节的原则性论证或机制推理
 - 不要使用“综上所述，我们应该理性看待”等空泛结尾
 - 字数控制在 {word_limit} 字以内
 - 直接输出发言内容，不要加标题、项目符号或解释你如何完成任务
@@ -105,6 +120,29 @@ def _format_history(history: list[dict]) -> str:
         label = SLOT_LABELS.get(s['slot'], s['slot'])
         lines.append(f"[{s['roundLabel']}] {label} ({s['agentName']}):\n{s['content']}\n")
     return '\n'.join(lines) if lines else '（暂无历史发言）'
+
+
+def _format_numbered_speeches(items: list[tuple[int, dict]], empty_text: str) -> str:
+    lines = []
+    for number, s in items:
+        label = SLOT_LABELS.get(s['slot'], s['slot'])
+        lines.append(f"[#{number}] {s['roundLabel']} | {label} ({s['agentName']}):\n{s['content']}\n")
+    return '\n'.join(lines) if lines else empty_text
+
+
+def _split_current_judge_scope(history: list[dict]) -> tuple[list[tuple[int, dict]], list[tuple[int, dict]]]:
+    numbered = list(enumerate(history, 1))
+    last_judge_index = -1
+    for index, s in enumerate(history):
+        if s.get('slot') == 'judge':
+            last_judge_index = index
+
+    previous = numbered[:last_judge_index + 1]
+    current = [
+        item for item in numbered[last_judge_index + 1:]
+        if item[1].get('slot') != 'judge'
+    ]
+    return previous, current
 
 
 def _last_judge_focus(history: list[dict]) -> str:
@@ -173,16 +211,14 @@ def build_debate_prompt(msg: dict) -> str:
 
 
 def build_interim_judge_prompt(msg: dict) -> str:
-    lines = []
-    for i, s in enumerate(msg.get('history', []), 1):
-        label = SLOT_LABELS.get(s['slot'], s['slot'])
-        lines.append(f"[{i}] {s['roundLabel']} | {label} ({s['agentName']}):\n{s['content']}\n")
+    previous, current = _split_current_judge_scope(msg.get('history', []))
     return INTERIM_JUDGE_PROMPT_TEMPLATE.format(
         topic=msg['topic'],
         round_label=msg['roundLabel'],
         secs=msg['secs'],
         word_limit=300,
-        transcript='\n'.join(lines) if lines else '（暂无发言）',
+        current_transcript=_format_numbered_speeches(current, '（暂无本回合发言）'),
+        previous_transcript=_format_numbered_speeches(previous, '（暂无此前发言）'),
     )
 
 

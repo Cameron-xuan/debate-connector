@@ -2,6 +2,7 @@
 
 import os
 import sys
+from typing import Optional
 
 from openai import OpenAI
 
@@ -35,16 +36,28 @@ def _read_stdin() -> str:
     return data.decode('utf-8', errors='replace').strip()
 
 
-def main() -> int:
+def _write_missing_key_hint() -> None:
+    _write_stderr("[error] OPENAI_API_KEY not set")
+    _write_stderr('[hint] macOS/Linux: export OPENAI_API_KEY="sk-..."')
+    _write_stderr('[hint] Windows PowerShell: $env:OPENAI_API_KEY="sk-..."')
+
+
+def _write_api_error_hint(exc: Exception, model: str, base_url: Optional[str]) -> None:
+    _write_stderr(f"[error] {exc}")
+    _write_stderr(f"[hint] OPENAI_MODEL={model}")
+    _write_stderr(f"[hint] OPENAI_BASE_URL={base_url or '(default OpenAI endpoint)'}")
+    _write_stderr("[hint] Check your API key, model name, base URL, network, and account quota.")
+
+
+def run_openai_stream(prompt: str) -> int:
     model = _sanitize(os.environ.get("OPENAI_MODEL", "gpt-4o"))
     base_url = _sanitize(os.environ.get("OPENAI_BASE_URL") or "") or None
     api_key = _sanitize(os.environ.get("OPENAI_API_KEY", ""))
 
     if not api_key:
-        _write_stderr("[error] OPENAI_API_KEY not set")
+        _write_missing_key_hint()
         return 1
 
-    prompt = TEST_PROMPT if _is_test_mode() else _read_stdin()
     if not prompt:
         return 0
     prompt = _sanitize(prompt)
@@ -62,10 +75,19 @@ def main() -> int:
             if delta:
                 _write_stdout(delta)
     except Exception as exc:
-        _write_stderr(f"[error] {exc}")
+        _write_api_error_hint(exc, model, base_url)
         return 1
 
     return 0
+
+
+def run_test() -> int:
+    return run_openai_stream(TEST_PROMPT)
+
+
+def main() -> int:
+    prompt = TEST_PROMPT if _is_test_mode() else _read_stdin()
+    return run_openai_stream(prompt)
 
 
 if __name__ == "__main__":

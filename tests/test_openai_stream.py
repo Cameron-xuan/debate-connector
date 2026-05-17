@@ -1,6 +1,8 @@
 import io
+import os
 import sys
 import unittest
+from unittest.mock import patch
 
 from debate_connector import openai_stream
 
@@ -35,6 +37,21 @@ class OpenAIStreamEncodingTests(unittest.TestCase):
             sys.stderr = original_stderr
 
         self.assertEqual(fake_stderr.buffer.getvalue(), b"[error] ?\n")
+
+    def test_run_test_reports_missing_api_key(self):
+        original_stderr = sys.stderr
+        fake_stderr = _TextStream()
+        sys.stderr = fake_stderr
+        try:
+            with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=True):
+                result = openai_stream.run_test()
+        finally:
+            sys.stderr = original_stderr
+
+        output = fake_stderr.buffer.getvalue().decode("utf-8")
+        self.assertEqual(result, 1)
+        self.assertIn("[error] OPENAI_API_KEY not set", output)
+        self.assertIn("export OPENAI_API_KEY", output)
 
 
 if __name__ == "__main__":
