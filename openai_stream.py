@@ -9,39 +9,8 @@ Environment variables:
   OPENAI_BASE_URL  Optional. Custom API endpoint (e.g. https://api.deepseek.com).
   OPENAI_MODEL     Optional. Model name. Default: gpt-4o
 """
-import os
-import sys
+from debate_connector.openai_stream import main
 
-try:
-    from openai import OpenAI
-except ImportError:
-    print("[error] openai package not installed. Run: pip install openai", file=sys.stderr)
-    sys.exit(1)
 
-MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o")
-BASE_URL = os.environ.get("OPENAI_BASE_URL") or None
-API_KEY = os.environ.get("OPENAI_API_KEY", "")
-
-if not API_KEY:
-    print("[error] OPENAI_API_KEY not set", file=sys.stderr)
-    sys.exit(1)
-
-prompt = sys.stdin.read().strip()
-if not prompt:
-    sys.exit(0)
-
-client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
-try:
-    response = client.chat.completions.create(
-        model=MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        stream=True,
-        max_tokens=2048,
-    )
-    for chunk in response:
-        delta = chunk.choices[0].delta.content
-        if delta:
-            print(delta, end="", flush=True)
-except Exception as e:
-    print(f"[error] {e}", file=sys.stderr)
-    sys.exit(1)
+if __name__ == "__main__":
+    raise SystemExit(main())
